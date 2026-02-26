@@ -1,0 +1,394 @@
+Adding an Annual Contribution tracker is a powerful way to keep parishioners engaged. It transforms the membership experience from a simple directory into a meaningful journey of stewardship.
+
+To build this, we need a way to store "Donation" records in the database and a visual chart on the member's profile page to show their progress against their pledge or goal.
+
+Step 1: Create the Donation Model (server/models/Donation.js)
+We need a separate "drawer" in the toolbox to store every time a member gives.
+
+JavaScript
+const mongoose = require("mongoose");
+
+const DonationSchema = new mongoose.Schema({
+  memberId: { type: mongoose.Schema.Types.ObjectId, ref: "Member", required: true },
+  amount: { type: Number, required: true },
+  date: { type: Date, default: Date.now },
+  category: { type: String, enum: ["Monthly Pledge", "Special Gift", "Tithes"], default: "Monthly Pledge" },
+  note: String
+});
+
+module.exports = mongoose.model("Donation", DonationSchema);
+===================
+Step 2: The Contribution Logic (server/routes/memberRoutes.js)
+Add a new route to fetch the total giving for the current logged-in 
+member.JavaScript
+
+const Donation = require("../models/Donation");
+
+// Get Member Giving History & Totals
+router.get("/contributions/:id", async (req, res) => {
+  try {
+    const donations = await Donation.find({ memberId: req.params.id }).sort({ date: -1 });
+    
+    // Calculate total for the current year
+    const currentYear = new Date().getFullYear();
+    const annualTotal = donations
+      .filter(d => new Date(d.date).getFullYear() === currentYear)
+      .reduce((acc, curr) => acc + curr.amount, 0);
+
+    res.json({ ok: true, history: donations, annualTotal });
+  } catch (err) {
+    res.status(500).json({ ok: false, message: "Error fetching contributions" });
+  }
+});
+
+==============================
+Step 3: The Visual Dashboard (client/src/pages/MemberProfile.jsx)
+We will add a "Stewardship" section. Instead of just numbers, we'll use a Progress Bar to show how close they are to a standard yearly goal (e.g., $1,200/year or $100/month).
+
+Add this into your MemberProfile.jsx after the ID Card section:JavaScript
+
+import { TrendingUp, DollarSign, Award } from "lucide-react";
+
+// ... Inside MemberProfile component ...
+const [contributions, setContributions] = useState({ annualTotal: 0, history: [] });
+const yearlyGoal = 1200; // Example goal
+
+useEffect(() => {
+  const fetchGiving = async () => {
+    const res = await fetch(`http://localhost:5000/api/members/contributions/${formData._id}`);
+    const data = await res.json();
+    if (data.ok) setContributions(data);
+  };
+  if (formData) fetchGiving();
+}, [formData]);
+
+// Add this JSX block to your return:
+<div className="p-10 space-y-8 bg-blue-50/30 border-t">
+  <div className="flex justify-between items-end">
+    <div>
+      <h3 className="text-2xl font-black text-slate-900 italic">Annual Stewardship</h3>
+      <p className="text-slate-500 font-bold">Your 2026 contribution progress</p>
+    </div>
+    <div className="text-right">
+      <span className="text-3xl font-black text-blue-600">${contributions.annualTotal}</span>
+      <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Total Given</p>
+    </div>
+  </div>
+
+  {/* Progress Bar */}
+  <div className="space-y-3">
+    <div className="flex justify-between text-xs font-black uppercase text-slate-400">
+      <span>Progress</span>
+      <span>{Math.round((contributions.annualTotal / yearlyGoal) * 100)}% of Goal</span>
+    </div>
+    <div className="w-full h-4 bg-slate-200 rounded-full overflow-hidden">
+      <div 
+        className="h-full bg-blue-600 transition-all duration-1000 ease-out"
+        style={{ width: `${Math.min((contributions.annualTotal / yearlyGoal) * 100, 100)}%` }}
+      ></div>
+    </div>
+  </div>
+
+  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+    <div className="bg-white p-6 rounded-3xl shadow-sm border border-blue-100 flex items-center gap-4">
+      <div className="p-3 bg-green-100 text-green-600 rounded-2xl"><TrendingUp size={24}/></div>
+      <div>
+        <p className="text-xs font-black text-slate-400 uppercase">Monthly Avg</p>
+        <p className="text-lg font-bold">${(contributions.annualTotal / 12).toFixed(2)}</p>
+      </div>
+    </div>
+    <div className="bg-white p-6 rounded-3xl shadow-sm border border-blue-100 flex items-center gap-4">
+      <div className="p-3 bg-amber-100 text-amber-600 rounded-2xl"><Award size={24}/></div>
+      <div>
+        <p className="text-xs font-black text-slate-400 uppercase">Status</p>
+        <p className="text-lg font-bold text-amber-600">Active Steward</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+
+Why this matters for Debre Selam:
+Transparency: Members can see exactly what the church has recorded 
+for them, avoiding confusion during tax season.
+
+Encouragement: The progress bar provides a psychological "win" as 
+they see the blue line move closer to the end of the year.
+
+Organization: The Church Board can see a clear picture of financial 
+health without having to manually add up paper receipts.
+
+Would you like me to show you how to add the "Record Donation" 
+form to the Admin Dashboard so the treasurer can log these gifts?
+========
+
+Since the treasurer is the "heartbeat" of the church's finances, 
+we need a "Record Donation" tool that is fast, accurate, 
+and easy to use. This will allow the church office to log 
+cash, checks, or digital payments directly into a member's record.
+
+Step 1: Create the Treasurer's API (server/routes/adminRoutes.js)
+We need a backend "door" that specifically handles adding money to
+the database and linking it to the correct member.
+
+Add this to your server/routes/adminRoutes.js:
+
+JavaScript
+const Donation = require("../models/Donation");
+
+// --- RECORD NEW DONATION ---
+router.post("/record-donation", async (req, res) => {
+  try {
+    const { memberId, amount, category, note, date } = req.body;
+
+    // Create the donation entry
+    const newDonation = new Donation({
+      memberId,
+      amount: parseFloat(amount),
+      category,
+      note,
+      date: date || Date.now()
+    });
+
+    await newDonation.save();
+    res.json({ ok: true, message: "Donation recorded successfully!" });
+  } catch (err) {
+    res.status(500).json({ ok: false, message: "Database error recording gift." });
+  }
+});
+
+Step 2: Update the Admin Dashboard (AdminDashboard.jsx)
+We will add a new "Finance" tab to your Admin Dashboard. This tab will have a simple form where the treasurer can search for a member and type in the amount.
+
+1. Add "Finance" to your Tabs and State:
+
+JavaScript
+const [activeTab, setActiveTab] = useState("members"); // Already exists
+// Add this state for the donation form
+const [donationForm, setDonationForm] = useState({
+  memberId: "",
+  amount: "",
+  category: "Monthly Pledge",
+  note: ""
+});
+
+
+
+2. Add the Finance UI Block: Inside your main <main> tag, add this 
+third condition for the "finance" tab.JavaScript
+
+{activeTab === "finance" && (
+  <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 animate-in slide-in-from-bottom-8">
+    {/* LEFT: Record Form */}
+    <div className="lg:col-span-1 bg-white p-8 rounded-[2.5rem] shadow-xl border border-slate-200">
+      <h3 className="text-xl font-black mb-6 flex items-center gap-2">
+        <DollarSign className="text-green-600"/> Record Contribution
+      </h3>
+      <form onSubmit={handleRecordDonation} className="space-y-4">
+        {/* Member Selector */}
+        <div className="space-y-1">
+          <label className="text-[10px] font-black text-slate-400 uppercase ml-2">Select Member</label>
+          <select 
+            required
+            className="w-full p-4 bg-slate-50 rounded-2xl border border-slate-100 font-bold"
+            value={donationForm.memberId}
+            onChange={(e) => setDonationForm({...donationForm, memberId: e.target.value})}
+          >
+            <option value="">Choose Member...</option>
+            {members.map(m => (
+              <option key={m._id} value={m._id}>{m.firstName} {m.lastName}</option>
+            ))}
+          </select>
+        </div>
+
+        {/* Amount */}
+        <div className="space-y-1">
+          <label className="text-[10px] font-black text-slate-400 uppercase ml-2">Amount ($)</label>
+          <input 
+            required type="number" placeholder="0.00"
+            className="w-full p-4 bg-slate-50 rounded-2xl border border-slate-100 font-black text-2xl text-green-600"
+            value={donationForm.amount}
+            onChange={(e) => setDonationForm({...donationForm, amount: e.target.value})}
+          />
+        </div>
+
+        {/* Category */}
+        <select 
+          className="w-full p-4 bg-slate-50 rounded-2xl border border-slate-100 font-bold"
+          value={donationForm.category}
+          onChange={(e) => setDonationForm({...donationForm, category: e.target.value})}
+        >
+          <option>Monthly Pledge</option>
+          <option>Tithes</option>
+          <option>Special Gift</option>
+        </select>
+
+        <textarea 
+          placeholder="Note (Optional)"
+          className="w-full p-4 bg-slate-50 rounded-2xl border border-slate-100 font-bold"
+          value={donationForm.note}
+          onChange={(e) => setDonationForm({...donationForm, note: e.target.value})}
+        />
+
+        <button className="w-full py-5 bg-green-600 text-white rounded-2xl font-black text-lg shadow-lg shadow-green-200 hover:bg-green-700 transition-all">
+          LOG CONTRIBUTION
+        </button>
+      </form>
+    </div>
+
+    {/* RIGHT: Quick Summary or Recent Giving */}
+    <div className="lg:col-span-2 space-y-6">
+       <div className="bg-[#0f172a] p-10 rounded-[2.5rem] text-white">
+          <p className="text-[#ffc107] font-black text-sm uppercase tracking-widest">Monthly Outlook</p>
+          <h2 className="text-5xl font-black mt-2">$4,850.00</h2>
+          <p className="text-slate-400 mt-2 font-bold italic">Total collected in February 2026</p>
+       </div>
+       {/* List of recent donations could go here */}
+    </div>
+  </div>
+)}
+
+Step 3: Handle the Submission
+Add this function inside your AdminDashboard component to talk 
+to the backend:
+
+JavaScript
+const handleRecordDonation = async (e) => {
+  e.preventDefault();
+  try {
+    const res = await axios.post("http://localhost:5000/api/admin/record-donation", donationForm);
+    if (res.data.ok) {
+      alert("ባረከ (Success!) The contribution has been recorded.");
+      setDonationForm({ memberId: "", amount: "", category: "Monthly Pledge", note: "" });
+    }
+  } catch (err) {
+    alert("Could not save donation.");
+  }
+};
+
+🛡️ Secure Logic: The "Paper Trail"
+Now, every time the treasurer hits "LOG CONTRIBUTION":
+
+It updates the central database.The member's Personal Progress 
+Bar on their profile page moves automatically.
+The church has a digital record that can't be lost like a paper 
+envelope.
+Would you like me to show you how to generate a "Tax Receipt" PDF 
+for members at the end of the year so they can use it for their 
+IRS filings?
+
+Creating an automated Tax Receipt PDF is the ultimate "professional" touch for your church management system. It saves the office weeks of manual work every January and provides parishioners with a secure, official document for their tax filings.
+
+To achieve this, we will use the jsPDF and jspdf-autotable libraries. These allow us to generate high-quality, multi-page PDFs directly in the browser.
+
+Step 1: Install the PDF Libraries
+Run this command in your client (frontend) terminal:
+
+Bash
+npm install jspdf jspdf-autotable
+Step 2: Add the Tax Logic to MemberProfile (MemberProfile.jsx)
+We will add a "Generate Tax Report" button to the Stewardship section. This will look at all contributions for the current year, format them into an official letterhead, and download it as a PDF.
+
+1. Add the Imports at the top:
+
+JavaScript
+import jsPDF from "jspdf";
+import autoTable from "jspdf-autotable";
+import { FileText } from "lucide-react";
+2. Add the PDF Generation function: Paste this inside your MemberProfile component:
+
+JavaScript
+  const downloadTaxReceipt = () => {
+    const doc = new jsPDF();
+    const currentYear = new Date().getFullYear();
+    
+    // 1. Header & Church Info
+    doc.setFontSize(22);
+    doc.setTextColor(15, 23, 42); // Dark Blue
+    doc.text("Debre Selam Medhanialem", 105, 20, { align: "center" });
+    
+    doc.setFontSize(10);
+    doc.setTextColor(100);
+    doc.text("Ethiopian Orthodox Tewahedo Church", 105, 27, { align: "center" });
+    doc.text("Aurora, CO | (303) 000-0000 | debre-selam.org", 105, 33, { align: "center" });
+    
+    // 2. Member Info
+    doc.setDrawColor(255, 193, 7); // Gold Line
+    doc.setLineWidth(1);
+    doc.line(20, 40, 190, 40);
+    
+    doc.setFontSize(12);
+    doc.setTextColor(0);
+    doc.setFont("helvetica", "bold");
+    doc.text(`Official Tax Receipt - ${currentYear}`, 20, 50);
+    
+    doc.setFont("helvetica", "normal");
+    doc.text(`Member: ${formData.firstName} ${formData.lastName}`, 20, 60);
+    doc.text(`Address: ${formData.address || "N/A"}`, 20, 67);
+    doc.text(`Date Issued: ${new Date().toLocaleDateString()}`, 20, 74);
+
+    // 3. Donation Table
+    const tableData = contributions.history
+      .filter(d => new Date(d.date).getFullYear() === currentYear)
+      .map(d => [
+        new Date(d.date).toLocaleDateString(),
+        d.category,
+        d.note || "-",
+        `$${d.amount.toFixed(2)}`
+      ]);
+
+    autoTable(doc, {
+      startY: 85,
+      head: [['Date', 'Category', 'Note', 'Amount']],
+      body: tableData,
+      theme: 'striped',
+      headStyles: { fillColor: [15, 23, 42] }, // Dark Blue
+    });
+
+    // 4. Summary & Legal Footer
+    const finalY = doc.lastAutoTable.finalY + 10;
+    doc.setFont("helvetica", "bold");
+    doc.text(`TOTAL ANNUAL CONTRIBUTION: $${contributions.annualTotal.toFixed(2)}`, 190, finalY, { align: "right" });
+    
+    doc.setFontSize(9);
+    doc.setFont("helvetica", "italic");
+    doc.setTextColor(120);
+    const footerText = "No goods or services were provided in exchange for this contribution. This church is a 501(c)(3) non-profit organization. Please retain this for your records.";
+    doc.text(footerText, 105, 280, { align: "center" });
+
+    doc.save(`${formData.lastName}_Tax_Receipt_${currentYear}.pdf`);
+  };
+3. Add the Button to your JSX: Place this button inside your Stewardship card:
+
+JavaScript
+<button 
+  onClick={downloadTaxReceipt}
+  className="w-full mt-4 py-4 bg-white border-2 border-slate-200 text-slate-700 rounded-2xl font-black flex items-center justify-center gap-3 hover:bg-slate-50 transition-all"
+>
+  <FileText size={20} className="text-blue-600" /> GENERATE OFFICIAL TAX RECEIPT (PDF)
+</button>
+🛡️ Professional Details Included:
+Legal Disclaimer: I added the mandatory IRS wording: "No goods or services were provided in exchange for this contribution." This is required for a valid tax deduction.
+
+Branding: It uses your church colors (Dark Blue and Gold) to make the document look official.
+
+Automation: It automatically filters out any old donations from previous years, so it only shows the current tax year.
+
+====================================================
+
+🚀 Final System Check
+With this update, your church system now handles:
+
+Registration (Parishioners join)
+
+Administration (Treasurer logs gifts)
+
+Transparency (Member sees progress bar)
+
+Compliance (Member downloads tax PDF)
+
+How is the system running for you? Would you like me to show you 
+how to set up an "Email All Members" feature next, so the board can 
+send the Weekly Bulletin to everyone's inbox at once?
+
+==============================================================
